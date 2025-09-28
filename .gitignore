@@ -1,0 +1,19 @@
+Python cache
+pycache/
+*.pyc
+
+Environment folders (Conda and venv)
+.venv/
+.env/
+venv/
+env/
+ENV/
+youtube-analyzer/
+
+Temporary files created by the script
+*.mp3
+
+IDE and OS specific files
+.vscode/
+.idea/
+*.DS_Store
