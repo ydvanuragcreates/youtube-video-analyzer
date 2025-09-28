@@ -4,147 +4,135 @@ import whisper
 import spacy
 from gensim import corpora
 from gensim.models import LdaModel
-from collections import Counter
 import re
 import uuid
+import requests
+import json
+import torch
 
-# Load the spaCy model
-# Make sure you've run: python -m spacy download en_core_web_sm
-nlp = spacy.load("en_core_web_sm")
+# Load the spaCy model once when the module is imported
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    print("Downloading 'en_core_web_sm' model...")
+    from spacy.cli import download
+    download("en_core_web_sm")
+    nlp = spacy.load("en_core_web_sm")
 
 def download_audio(youtube_url):
-    """
-    Downloads audio from a YouTube URL to a unique temporary file.
-    """
+    unique_id = uuid.uuid4()
+    output_path = f"audio_{unique_id}.mp3"
+    print(f"Downloading audio from {youtube_url}...")
     try:
-        # Generate a unique filename to avoid conflicts if multiple users access the app
-        unique_id = uuid.uuid4()
-        output_path = f"audio_{unique_id}.mp3"
-        print(f"Downloading audio from {youtube_url}...")
-        command = [
-            'yt-dlp', '-x', '--audio-format', 'mp3',
-            '-o', output_path, youtube_url
-        ]
+        command = ['yt-dlp', '-x', '--audio-format', 'mp3', '-o', output_path, youtube_url]
         subprocess.run(command, check=True, capture_output=True, text=True)
         print("Download completed.")
         return output_path
     except subprocess.CalledProcessError as e:
-        print(f"Error downloading audio: {e.stderr}")
-        # Raise a clear error that the web app can catch
         raise RuntimeError(f"Failed to download audio. yt-dlp error: {e.stderr}")
     except FileNotFoundError:
         raise RuntimeError("yt-dlp is not installed or not in your PATH.")
 
-
 def transcribe_audio(audio_path):
-    """
-    Transcribes an audio file using Whisper.
-    """
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Audio file not found at {audio_path}")
-    try:
-        print("Transcribing audio...")
-        # Use the "base" model for a good balance of speed and accuracy
-        model = whisper.load_model("base")
-        result = model.transcribe(audio_path, fp16=False) # Set fp16=False for CPU
-        print("Transcription completed.")
-        return result['text']
-    except Exception as e:
-        raise RuntimeError(f"An error occurred during transcription: {e}")
+    print("Transcribing audio...")
+    model = whisper.load_model("base")
+    
+    # ---- THIS IS THE FINAL CORRECTION ----
+    # The 'device' argument is not needed here. 
+    # Whisper automatically uses the GPU if torch.cuda.is_available() is true.
+    result = model.transcribe(audio_path) 
+    # ---- END OF CORRECTION ----
 
-def extract_keywords(text, num_keywords=10):
-    doc = nlp(text.lower())
-    keywords = [
-        token.text for token in doc
-        if not token.is_stop and not token.is_punct and token.pos_ in ['NOUN', 'PROPN', 'ADJ']
-    ]
-    return [word for word, freq in Counter(keywords).most_common(num_keywords)]
-
-def topic_modeling(text, num_topics=3, num_words=5):
-    doc = nlp(text.lower())
-    tokens = [
-        token.lemma_ for token in doc
-        if not token.is_stop and not token.is_punct and len(token.text) > 3
-    ]
-    if not tokens: return ["Not enough content for topic modeling."]
-    id2word = corpora.Dictionary([tokens])
-    corpus = [id2word.doc2bow(tokens)]
-    if not corpus: return ["Could not create a corpus for topic modeling."]
-    lda_model = LdaModel(corpus=corpus, id2word=id2word, num_topics=num_topics, random_state=100, passes=10)
-    topics = []
-    for idx, topic in lda_model.print_topics(-1, num_words=num_words):
-        words = re.findall(r'"(.*?)"', topic)
-        topics.append(f"Topic {idx+1}: " + ", ".join(words))
-    return topics
+    print("Transcription completed.")
+    return result['text']
 
 def generate_summary(text, num_sentences=5):
     doc = nlp(text)
-    if not doc or len(list(doc.sents)) < num_sentences: return "Not enough content to generate a summary."
+    if len(list(doc.sents)) < num_sentences: return "Content is too short for a meaningful summary."
     sentences = list(doc.sents)
-    word_frequencies = Counter()
-    for word in nlp(text.lower()):
-        if not word.is_stop and not word.is_punct: word_frequencies[word.text] += 1
-    if not word_frequencies: return "Could not determine word frequencies for summary."
+    word_frequencies = {word.text.lower(): 0 for word in doc if not word.is_stop and not word.is_punct}
+    for word in doc:
+        if word.text.lower() in word_frequencies: word_frequencies[word.text.lower()] += 1
+    if not word_frequencies: return "Could not generate summary."
     max_freq = max(word_frequencies.values(), default=0)
     for word in word_frequencies.keys(): word_frequencies[word] = (word_frequencies[word]/max_freq)
-    sentence_scores = {}
-    for sent in sentences:
-        for word in sent:
-            if word.text.lower() in word_frequencies:
-                if sent in sentence_scores: sentence_scores[sent] += word_frequencies[word.text.lower()]
-                else: sentence_scores[sent] = word_frequencies[word.text.lower()]
+    sentence_scores = {sent: sum(word_frequencies.get(word.text.lower(), 0) for word in sent) for sent in sentences}
     summarized_sentences = sorted(sentence_scores, key=sentence_scores.get, reverse=True)[:num_sentences]
-    summarized_sentences = sorted(summarized_sentences, key=lambda s: s.start)
+    summarized_sentences.sort(key=lambda s: s.start)
     return " ".join([sent.text for sent in summarized_sentences])
 
-def named_entity_recognition(text):
-    doc = nlp(text)
-    entities = {}
-    for ent in doc.ents:
-        if ent.label_ not in entities: entities[ent.label_] = []
-        if ent.text not in entities[ent.label_]: entities[ent.label_].append(ent.text)
-    return entities
+def topic_modeling(text):
+    doc = nlp(text.lower())
+    tokens = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and len(token.text) > 3]
+    if len(tokens) < 20: return "Not enough content to determine a topic."
+    id2word = corpora.Dictionary([tokens])
+    corpus = [id2word.doc2bow(tokens)]
+    lda_model = LdaModel(corpus=corpus, id2word=id2word, num_topics=1, random_state=100, passes=10)
+    topic = lda_model.print_topics(num_topics=1, num_words=7)[0][1]
+    words = re.findall(r'"(.*?)"', topic)
+    return ", ".join(words).capitalize()
 
-
-# This is the function the web app (app.py) will call
 def analyze_video(youtube_url):
-    """
-    This single function runs the entire pipeline:
-    1. Downloads audio
-    2. Transcribes audio
-    3. Analyzes the transcript
-    4. Cleans up the audio file
-    5. Returns all results in a dictionary for the web app.
-    """
     audio_file = None
     try:
-        # Step 1: Download Audio
         audio_file = download_audio(youtube_url)
-
-        # Step 2: Transcribe Audio
         transcript = transcribe_audio(audio_file)
-        if not transcript:
-            raise RuntimeError("Transcription failed. The video may have no speech.")
-
-        # Step 3: Analyze the Transcript
+        if not transcript.strip():
+            raise RuntimeError("Transcription resulted in empty text. The video may not contain speech.")
+        
         print("Analyzing transcript...")
         summary = generate_summary(transcript)
-        topics = topic_modeling(transcript)
-        keywords = extract_keywords(transcript)
-        named_entities = named_entity_recognition(transcript)
+        main_topic = topic_modeling(transcript)
         print("Analysis complete.")
 
-        # Step 4: Return all results in a structured dictionary
         return {
             "summary": summary,
-            "topics": topics,
-            "keywords": keywords,
-            "named_entities": named_entities,
+            "topic": main_topic,
             "transcript": transcript
         }
     finally:
-        # Step 5: Clean up the temporary audio file
         if audio_file and os.path.exists(audio_file):
             os.remove(audio_file)
             print(f"Cleaned up temporary file: {audio_file}")
+
+def generate_quiz_from_text(transcript, api_key):
+    print("Generating quiz questions with Gemini API...")
+    API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
+    
+    truncated_transcript = transcript[:8000] # Truncate to avoid exceeding API limits
+
+    prompt = f"""
+    Based on the following transcript, generate a 5-question multiple-choice quiz. The quiz should test understanding of the main concepts.
+    Provide the output as a JSON array. Each object in the array should have "question" (a string), "options" (an array of 4 strings), and "answer" (the correct string from the options).
+    Provide ONLY the raw JSON array output, nothing else.
+
+    Transcript:
+    ---
+    {truncated_transcript}
+    ---
+    """
+
+    payload = {
+      "contents": [{"parts": [{"text": prompt}]}],
+      "generationConfig": {"responseMimeType": "application/json"}
+    }
+    headers = {'Content-Type': 'application/json'}
+    
+    response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
+    response.raise_for_status()
+    
+    response_data = response.json()
+    json_string = response_data['candidates'][0]['content']['parts'][0]['text']
+    
+    try:
+        # The model should return a JSON array directly
+        questions = json.loads(json_string)
+        # Basic validation of the received structure
+        if not isinstance(questions, list) or not all('question' in q and 'options' in q and 'answer' in q for q in questions):
+            raise ValueError("The received data is not in the expected quiz format.")
+        return questions
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"Error parsing JSON from API response: {e}")
+        print(f"Received text: {json_string}")
+        raise RuntimeError("Failed to parse the quiz questions from the AI. The format was incorrect.")
 

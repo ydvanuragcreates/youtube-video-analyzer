@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Content Quiz</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .option-btn { transition: background-color 0.2s, border-color 0.2s, color 0.2s; }
+        .correct { background-color: #d1fae5 !important; border-color: #10b981 !important; color: #065f46; }
+        .incorrect { background-color: #fee2e2 !important; border-color: #ef4444 !important; color: #991b1b; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="max-w-2xl mx-auto">
+            <h1 class="text-3xl font-bold text-center mb-2">Video Content Quiz</h1>
+            <p class="text-center text-gray-600 mb-8">Test your knowledge of the video you just analyzed.</p>
+
+            <div id="quiz-container" class="bg-white p-6 md:p-8 rounded-2xl shadow-lg border border-gray-200 min-h-[300px]">
+                {% if error %}
+                <div class="text-center py-10">
+                    <p class="text-lg font-bold text-red-600">Error</p>
+                    <p class="text-gray-500 mt-2">{{ error }}</p>
+                    <a href="/" class="mt-4 inline-block bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700">Go Back</a>
+                </div>
+                {% else %}
+                <div id="quiz-loading" class="text-center py-10">
+                    <p class="text-lg font-semibold animate-pulse">Generating your personalized quiz with AI...</p>
+                    <p class="text-gray-500 mt-2">This may take a moment.</p>
+                </div>
+                <div id="quiz-error" class="hidden text-center py-10">
+                     <p class="text-lg font-bold text-red-600">Could Not Generate Quiz</p>
+                     <p class="text-gray-500 mt-2" id="error-message"></p>
+                     <a href="/" class="mt-4 inline-block bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700">Go Back</a>
+                </div>
+                <div id="quiz-content" class="hidden">
+                    <div id="question-container" class="mb-6">
+                        <p class="text-lg font-semibold text-gray-800" id="question-text"></p>
+                    </div>
+                    <div id="options-container" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+                    <div class="mt-6 flex justify-between items-center">
+                        <p id="feedback-text" class="font-semibold"></p>
+                        <button id="next-btn" class="bg-indigo-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400" disabled>Next</button>
+                    </div>
+                </div>
+                <div id="results-container" class="hidden text-center py-10">
+                    <h2 class="text-2xl font-bold mb-4">Quiz Complete!</h2>
+                    <p class="text-5xl font-bold mb-2" id="score-text"></p>
+                    <p class="text-gray-600 mb-6" id="score-summary"></p>
+                    <a href="/" class="bg-indigo-600 text-white font-semibold py-2 px-5 rounded-lg hover:bg-indigo-700">Analyze Another Video</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </main>
+
+    <script>
+        {% if not error %}
+        const quizLoading = document.getElementById('quiz-loading');
+        const quizError = document.getElementById('quiz-error');
+        const errorMessage = document.getElementById('error-message');
+        const quizContent = document.getElementById('quiz-content');
+        const questionText = document.getElementById('question-text');
+        const optionsContainer = document.getElementById('options-container');
+        const feedbackText = document.getElementById('feedback-text');
+        const nextBtn = document.getElementById('next-btn');
+        const resultsContainer = document.getElementById('results-container');
+        const scoreText = document.getElementById('score-text');
+        const scoreSummary = document.getElementById('score-summary');
+
+        let questions = [];
+        let currentQuestionIndex = 0;
+        let score = 0;
+
+        async function fetchQuestions() {
+            try {
+                const response = await fetch('/generate_questions', { method: 'POST' });
+                const data = await response.json();
+                if (!response.ok) { throw new Error(data.error || 'Failed to fetch questions'); }
+                if (Array.isArray(data) && data.length > 0) {
+                    questions = data;
+                    startQuiz();
+                } else { throw new Error('Invalid quiz format received from server.'); }
+            } catch (error) {
+                console.error('Error fetching questions:', error);
+                showError(error.message);
+            }
+        }
+
+        function showError(message) {
+            quizLoading.classList.add('hidden');
+            errorMessage.textContent = message;
+            quizError.classList.remove('hidden');
+        }
+
+        function startQuiz() {
+            quizLoading.classList.add('hidden');
+            quizContent.classList.remove('hidden');
+            score = 0;
+            currentQuestionIndex = 0;
+            showQuestion();
+        }
+
+        function showQuestion() {
+            resetState();
+            const question = questions[currentQuestionIndex];
+            questionText.textContent = `${currentQuestionIndex + 1}. ${question.question}`;
+            question.options.forEach(option => {
+                const button = document.createElement('button');
+                button.innerHTML = option; // Use innerHTML to render potential formatting
+                button.classList.add('option-btn', 'w-full', 'p-3', 'border-2', 'rounded-lg', 'text-left', 'hover:bg-indigo-50');
+                button.addEventListener('click', selectAnswer);
+                optionsContainer.appendChild(button);
+            });
+        }
+
+        function resetState() {
+            nextBtn.disabled = true;
+            feedbackText.textContent = '';
+            while (optionsContainer.firstChild) {
+                optionsContainer.removeChild(optionsContainer.firstChild);
+            }
+        }
+
+        function selectAnswer(e) {
+            const selectedBtn = e.currentTarget;
+            const correctAnswer = questions[currentQuestionIndex].answer;
+
+            Array.from(optionsContainer.children).forEach(button => {
+                button.disabled = true;
+                if (button.innerHTML === correctAnswer) { button.classList.add('correct'); }
+            });
+
+            if (selectedBtn.innerHTML === correctAnswer) {
+                score++;
+                feedbackText.textContent = 'Correct!';
+                feedbackText.className = 'font-semibold text-green-600';
+            } else {
+                selectedBtn.classList.add('incorrect');
+                feedbackText.textContent = 'Incorrect!';
+                feedbackText.className = 'font-semibold text-red-600';
+            }
+            
+            nextBtn.disabled = false;
+        }
+
+        nextBtn.addEventListener('click', () => {
+            currentQuestionIndex++;
+            if (currentQuestionIndex < questions.length) {
+                showQuestion();
+            } else {
+                showResults();
+            }
+        });
+
+        function showResults() {
+            quizContent.classList.add('hidden');
+            resultsContainer.classList.remove('hidden');
+            scoreText.textContent = `${score} / ${questions.length}`;
+            scoreSummary.textContent = `You answered ${score} out of ${questions.length} questions correctly.`;
+        }
+        
+        document.addEventListener('DOMContentLoaded', fetchQuestions);
+        {% endif %}
+    </script>
+</body>
+</html>
+
