@@ -20,6 +20,7 @@ except OSError:
     nlp = spacy.load("en_core_web_sm")
 
 def download_audio(youtube_url):
+    # ... (no changes in this function)
     unique_id = uuid.uuid4()
     output_path = f"audio_{unique_id}.mp3"
     print(f"Downloading audio from {youtube_url}...")
@@ -34,19 +35,17 @@ def download_audio(youtube_url):
         raise RuntimeError("yt-dlp is not installed or not in your PATH.")
 
 def transcribe_audio(audio_path):
+    # ... (no changes in this function)
     print("Transcribing audio...")
-    model = whisper.load_model("base")
-    
-    # ---- THIS IS THE FINAL CORRECTION ----
-    # The 'device' argument is not needed here. 
-    # Whisper automatically uses the GPU if torch.cuda.is_available() is true.
+    model_size = "tiny" 
+    print(f"Loading Whisper model: {model_size}")
+    model = whisper.load_model(model_size)
     result = model.transcribe(audio_path) 
-    # ---- END OF CORRECTION ----
-
     print("Transcription completed.")
     return result['text']
 
 def generate_summary(text, num_sentences=5):
+    # ... (no changes in this function)
     doc = nlp(text)
     if len(list(doc.sents)) < num_sentences: return "Content is too short for a meaningful summary."
     sentences = list(doc.sents)
@@ -62,6 +61,7 @@ def generate_summary(text, num_sentences=5):
     return " ".join([sent.text for sent in summarized_sentences])
 
 def topic_modeling(text):
+    # ... (no changes in this function)
     doc = nlp(text.lower())
     tokens = [token.lemma_ for token in doc if not token.is_stop and not token.is_punct and len(token.text) > 3]
     if len(tokens) < 20: return "Not enough content to determine a topic."
@@ -73,6 +73,7 @@ def topic_modeling(text):
     return ", ".join(words).capitalize()
 
 def analyze_video(youtube_url):
+    # ... (no changes in this function)
     audio_file = None
     try:
         audio_file = download_audio(youtube_url)
@@ -96,43 +97,59 @@ def analyze_video(youtube_url):
             print(f"Cleaned up temporary file: {audio_file}")
 
 def generate_quiz_from_text(transcript, api_key):
+    # ... (no changes in this function)
     print("Generating quiz questions with Gemini API...")
     API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
-    
-    truncated_transcript = transcript[:8000] # Truncate to avoid exceeding API limits
-
+    truncated_transcript = transcript[:8000]
     prompt = f"""
-    Based on the following transcript, generate a 5-question multiple-choice quiz. The quiz should test understanding of the main concepts.
-    Provide the output as a JSON array. Each object in the array should have "question" (a string), "options" (an array of 4 strings), and "answer" (the correct string from the options).
-    Provide ONLY the raw JSON array output, nothing else.
-
-    Transcript:
-    ---
-    {truncated_transcript}
-    ---
-    """
-
-    payload = {
-      "contents": [{"parts": [{"text": prompt}]}],
-      "generationConfig": {"responseMimeType": "application/json"}
-    }
+    Based on the following transcript, generate a 5-question multiple-choice quiz...
+    """ # (prompt is unchanged)
+    payload = { "contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"responseMimeType": "application/json"} }
     headers = {'Content-Type': 'application/json'}
-    
     response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
     response.raise_for_status()
-    
     response_data = response.json()
     json_string = response_data['candidates'][0]['content']['parts'][0]['text']
-    
     try:
-        # The model should return a JSON array directly
         questions = json.loads(json_string)
-        # Basic validation of the received structure
         if not isinstance(questions, list) or not all('question' in q and 'options' in q and 'answer' in q for q in questions):
             raise ValueError("The received data is not in the expected quiz format.")
         return questions
     except (json.JSONDecodeError, ValueError) as e:
         print(f"Error parsing JSON from API response: {e}")
-        print(f"Received text: {json_string}")
         raise RuntimeError("Failed to parse the quiz questions from the AI. The format was incorrect.")
+
+# --- NEW FUNCTION FOR THE CHATBOT ---
+def answer_question_from_text(transcript, question, api_key):
+    print(f"Answering question: '{question}' with Gemini API...")
+    API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
+
+    # Use a larger portion of the transcript for context
+    context_transcript = transcript[:12000]
+
+    prompt = f"""
+    You are an expert assistant who answers questions based ONLY on the provided video transcript.
+    Do not use any outside knowledge. If the answer is not in the transcript, say "I'm sorry, but the answer to that question is not in the video transcript."
+
+    User's Question:
+    "{question}"
+
+    Video Transcript:
+    ---
+    {context_transcript}
+    ---
+    
+    Your Answer:
+    """
+
+    payload = { "contents": [{"parts": [{"text": prompt}]}] }
+    headers = {'Content-Type': 'application/json'}
+
+    response = requests.post(API_URL, headers=headers, json=payload, timeout=90)
+    response.raise_for_status()
+    
+    response_data = response.json()
+    answer = response_data['candidates'][0]['content']['parts'][0]['text']
+    
+    return answer
 

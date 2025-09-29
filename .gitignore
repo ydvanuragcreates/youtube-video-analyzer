@@ -1,8 +1,17 @@
-Python cache
+--- Secrets ---
+NEVER commit your API keys or other secrets! This is the most important line.
+.env
+
+--- Python Cache & Compiled Files ---
+These are temporary files Python creates to run your code faster.
 pycache/
 *.pyc
+*.pyo
+*.pyd
 
-Environment folders (Conda and venv)
+--- Environment Folders ---
+Ignore standard virtual environment folders (like venv) and the specific
+Conda environment folder used for this project.
 .venv/
 .env/
 venv/
@@ -10,10 +19,12 @@ env/
 ENV/
 youtube-analyzer/
 
-Temporary files created by the script
+--- Temporary Files ---
+Ignore the audio files downloaded by the script.
 *.mp3
 
-IDE and OS specific files
+--- IDE & OS Specific Files ---
+Ignore settings files from editors like VS Code and OS files from macOS.
 .vscode/
 .idea/
 *.DS_Store
